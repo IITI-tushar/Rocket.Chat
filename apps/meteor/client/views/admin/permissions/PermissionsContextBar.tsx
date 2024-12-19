@@ -3,7 +3,8 @@ import { useRouteParameter, useRoute, useTranslation, useSetModal } from '@rocke
 import type { ReactElement } from 'react';
 import React, { useEffect } from 'react';
 
-import { useHasLicenseModule } from '../../../../ee/client/hooks/useHasLicenseModule';
+import CustomRoleUpsellModal from './CustomRoleUpsellModal';
+import EditRolePageWithData from './EditRolePageWithData';
 import {
 	Contextualbar,
 	ContextualbarHeader,
@@ -11,8 +12,7 @@ import {
 	ContextualbarClose,
 	ContextualbarDialog,
 } from '../../../components/Contextualbar';
-import CustomRoleUpsellModal from './CustomRoleUpsellModal';
-import EditRolePageWithData from './EditRolePageWithData';
+import { useHasLicenseModule } from '../../../hooks/useHasLicenseModule';
 
 const PermissionsContextBar = (): ReactElement | null => {
 	const t = useTranslation();

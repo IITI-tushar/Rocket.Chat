@@ -1,3 +1,4 @@
+import { AppEvents, Apps } from '@rocket.chat/apps';
 import { AppsEngineException } from '@rocket.chat/apps-engine/definition/exceptions';
 import type { ISubscriptionExtraData } from '@rocket.chat/core-services';
 import type { ICreatedRoom, IRoom, ISubscription, IUser } from '@rocket.chat/core-typings';
@@ -6,11 +7,11 @@ import { Random } from '@rocket.chat/random';
 import { Meteor } from 'meteor/meteor';
 import type { MatchKeysAndValues } from 'mongodb';
 
-import { Apps } from '../../../../ee/server/apps';
 import { callbacks } from '../../../../lib/callbacks';
 import { isTruthy } from '../../../../lib/isTruthy';
 import { settings } from '../../../settings/server';
 import { getDefaultSubscriptionPref } from '../../../utils/lib/getDefaultSubscriptionPref';
+import { notifyOnRoomChangedById, notifyOnSubscriptionChangedByRoomIdAndUserId } from '../lib/notifyListener';
 
 const generateSubscription = (
 	fname: string,
@@ -103,7 +104,7 @@ export async function createDirectRoom(
 			_USERNAMES: usernames,
 		};
 
-		const prevent = await Apps.triggerEvent('IPreRoomCreatePrevent', tmpRoom).catch((error) => {
+		const prevent = await Apps.self?.triggerEvent(AppEvents.IPreRoomCreatePrevent, tmpRoom).catch((error) => {
 			if (error.name === AppsEngineException.name) {
 				throw new Meteor.Error('error-app-prevented', error.message);
 			}
@@ -115,7 +116,10 @@ export async function createDirectRoom(
 			throw new Meteor.Error('error-app-prevented', 'A Rocket.Chat App prevented the room creation.');
 		}
 
-		const result = await Apps.triggerEvent('IPreRoomCreateModify', await Apps.triggerEvent('IPreRoomCreateExtend', tmpRoom));
+		const result = await Apps.self?.triggerEvent(
+			AppEvents.IPreRoomCreateModify,
+			await Apps.self?.triggerEvent(AppEvents.IPreRoomCreateExtend, tmpRoom),
+		);
 
 		if (typeof result === 'object') {
 			Object.assign(roomInfo, result);
@@ -127,9 +131,11 @@ export async function createDirectRoom(
 	// @ts-expect-error - TODO: room expects `u` to be passed, but it's not part of the original object in here
 	const rid = room?._id || (await Rooms.insertOne(roomInfo)).insertedId;
 
+	void notifyOnRoomChangedById(rid, isNewRoom ? 'inserted' : 'updated');
+
 	if (roomMembers.length === 1) {
 		// dm to yourself
-		await Subscriptions.updateOne(
+		const { modifiedCount, upsertedCount } = await Subscriptions.updateOne(
 			{ rid, 'u._id': roomMembers[0]._id },
 			{
 				$set: { open: true },
@@ -140,6 +146,9 @@ export async function createDirectRoom(
 			},
 			{ upsert: true },
 		);
+		if (modifiedCount || upsertedCount) {
+			void notifyOnSubscriptionChangedByRoomIdAndUserId(rid, roomMembers[0]._id, modifiedCount ? 'updated' : 'inserted');
+		}
 	} else {
 		const memberIds = roomMembers.map((member) => member._id);
 		const membersWithPreferences: IUser[] = await Users.find(
@@ -149,7 +158,7 @@ export async function createDirectRoom(
 
 		for await (const member of membersWithPreferences) {
 			const otherMembers = sortedMembers.filter(({ _id }) => _id !== member._id);
-			await Subscriptions.updateOne(
+			const { modifiedCount, upsertedCount } = await Subscriptions.updateOne(
 				{ rid, 'u._id': member._id },
 				{
 					...(options?.creator === member._id && { $set: { open: true } }),
@@ -160,6 +169,9 @@ export async function createDirectRoom(
 				},
 				{ upsert: true },
 			);
+			if (modifiedCount || upsertedCount) {
+				void notifyOnSubscriptionChangedByRoomIdAndUserId(rid, member._id, modifiedCount ? 'updated' : 'inserted');
+			}
 		}
 	}
 
@@ -169,7 +181,7 @@ export async function createDirectRoom(
 
 		await callbacks.run('afterCreateDirectRoom', insertedRoom, { members: roomMembers, creatorId: options?.creator });
 
-		void Apps.triggerEvent('IPostRoomCreate', insertedRoom);
+		void Apps.self?.triggerEvent(AppEvents.IPostRoomCreate, insertedRoom);
 	}
 
 	return {

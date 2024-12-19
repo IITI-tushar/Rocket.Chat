@@ -5,7 +5,9 @@ import { useSetting, useUserPreference } from '@rocket.chat/ui-contexts';
 import { differenceInSeconds } from 'date-fns';
 import type { ReactElement } from 'react';
 import React, { Fragment } from 'react';
+import { useTranslation } from 'react-i18next';
 
+import { ThreadMessageItem } from './ThreadMessageItem';
 import { MessageTypes } from '../../../../../../app/ui-utils/client';
 import { isTruthy } from '../../../../../../lib/isTruthy';
 import { CustomScrollbars } from '../../../../../components/CustomScrollbars';
@@ -19,7 +21,7 @@ import { useMessageListNavigation } from '../../../hooks/useMessageListNavigatio
 import { useLegacyThreadMessageJump } from '../hooks/useLegacyThreadMessageJump';
 import { useLegacyThreadMessageListScrolling } from '../hooks/useLegacyThreadMessageListScrolling';
 import { useLegacyThreadMessages } from '../hooks/useLegacyThreadMessages';
-import { ThreadMessageItem } from './ThreadMessageItem';
+import './threads.css';
 
 const isMessageSequential = (current: IMessage, previous: IMessage | undefined, groupingRange: number): boolean => {
 	if (!previous) {
@@ -49,6 +51,7 @@ type ThreadMessageListProps = {
 };
 
 const ThreadMessageList = ({ mainMessage }: ThreadMessageListProps): ReactElement => {
+	const { t } = useTranslation();
 	const { innerRef, bubbleRef, listStyle, ...bubbleDate } = useDateScroll();
 
 	const { messages, loading } = useLegacyThreadMessages(mainMessage._id);
@@ -62,12 +65,12 @@ const ThreadMessageList = ({ mainMessage }: ThreadMessageListProps): ReactElemen
 	const hideUsernames = useUserPreference<boolean>('hideUsernames');
 	const showUserAvatar = !!useUserPreference<boolean>('displayAvatars');
 	const firstUnreadMessageId = useFirstUnreadMessageId();
-	const messageGroupingPeriod = Number(useSetting('Message_GroupingPeriod'));
+	const messageGroupingPeriod = useSetting('Message_GroupingPeriod', 300);
 
-	const { messageListRef, messageListProps } = useMessageListNavigation();
-	const listRef = useMergedRefs<HTMLElement | null>(listScrollRef, listJumpRef, messageListRef);
+	const { messageListRef } = useMessageListNavigation();
+	const listRef = useMergedRefs<HTMLElement | null>(listScrollRef, messageListRef);
 
-	const scrollRef = useMergedRefs<HTMLElement | null>(innerRef, listWrapperScrollRef);
+	const scrollRef = useMergedRefs<HTMLElement | null>(innerRef, listWrapperScrollRef, listJumpRef);
 
 	return (
 		<div className={['thread-list js-scroll-thread', hideUsernames && 'hide-usernames'].filter(isTruthy).join(' ')}>
@@ -83,8 +86,8 @@ const ThreadMessageList = ({ mainMessage }: ThreadMessageListProps): ReactElemen
 					is='ul'
 					className={[listStyle, 'thread']}
 					ref={listRef}
+					aria-label={t('Thread_message_list')}
 					style={{ scrollBehavior: 'smooth', overflowX: 'hidden' }}
-					{...messageListProps}
 				>
 					{loading ? (
 						<li className='load-more'>

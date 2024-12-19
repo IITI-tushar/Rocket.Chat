@@ -8,8 +8,9 @@ import stream from 'stream';
 import URL from 'url';
 
 import { hashLoginToken } from '@rocket.chat/account-utils';
+import { Apps, AppEvents } from '@rocket.chat/apps';
 import { AppsEngineException } from '@rocket.chat/apps-engine/definition/exceptions';
-import type { IUpload } from '@rocket.chat/core-typings';
+import { isE2EEUpload, type IUpload } from '@rocket.chat/core-typings';
 import { Users, Avatars, UserDataFiles, Uploads, Settings, Subscriptions, Messages, Rooms } from '@rocket.chat/models';
 import type { NextFunction } from 'connect';
 import filesize from 'filesize';
@@ -21,19 +22,18 @@ import sharp from 'sharp';
 import type { WritableStreamBuffer } from 'stream-buffers';
 import streamBuffers from 'stream-buffers';
 
-import { AppEvents, Apps } from '../../../../ee/server/apps';
+import { streamToBuffer } from './streamToBuffer';
 import { i18n } from '../../../../server/lib/i18n';
 import { SystemLogger } from '../../../../server/lib/logger/system';
 import { roomCoordinator } from '../../../../server/lib/rooms/roomCoordinator';
 import { UploadFS } from '../../../../server/ufs';
 import { ufsComplete } from '../../../../server/ufs/ufs-methods';
 import type { Store, StoreOptions } from '../../../../server/ufs/ufs-store';
-import { canAccessRoomAsync } from '../../../authorization/server/functions/canAccessRoom';
+import { canAccessRoomAsync, canAccessRoomIdAsync } from '../../../authorization/server/functions/canAccessRoom';
 import { settings } from '../../../settings/server';
 import { mime } from '../../../utils/lib/mimeTypes';
 import { isValidJWT, generateJWT } from '../../../utils/server/lib/JWTHelper';
 import { fileUploadIsValidContentType } from '../../../utils/server/restrictions';
-import { streamToBuffer } from './streamToBuffer';
 
 const cookie = new Cookies();
 let maxFileSize = 0;
@@ -170,14 +170,25 @@ export const FileUpload = {
 			throw new Meteor.Error('error-file-too-large', reason);
 		}
 
-		if (!fileUploadIsValidContentType(file.type as string, '')) {
+		if (!settings.get('E2E_Enable_Encrypt_Files') && isE2EEUpload(file)) {
+			const reason = i18n.t('Encrypted_file_not_allowed', { lng: language });
+			throw new Meteor.Error('error-invalid-file-type', reason);
+		}
+
+		// E2EE files should be of type application/octet-stream. no information about them should be disclosed on upload if they are encrypted
+		if (isE2EEUpload(file)) {
+			file.type = 'application/octet-stream';
+		}
+
+		// E2EE files are of type application/octet-stream, which is whitelisted for E2EE files
+		if (!fileUploadIsValidContentType(file?.type, isE2EEUpload(file) ? 'application/octet-stream' : undefined)) {
 			const reason = i18n.t('File_type_is_not_accepted', { lng: language });
 			throw new Meteor.Error('error-invalid-file-type', reason);
 		}
 
 		// App IPreFileUpload event hook
 		try {
-			await Apps.triggerEvent(AppEvents.IPreFileUpload, { file, content: content || Buffer.from([]) });
+			await Apps.self?.triggerEvent(AppEvents.IPreFileUpload, { file, content: content || Buffer.from([]) });
 		} catch (error: any) {
 			if (error.name === AppsEngineException.name) {
 				throw new Meteor.Error('error-app-prevented', error.message);
@@ -373,7 +384,7 @@ export const FileUpload = {
 					? {
 							width,
 							height,
-					  }
+						}
 					: undefined,
 		};
 
@@ -420,7 +431,6 @@ export const FileUpload = {
 			await Avatars.deleteFile(oldAvatar._id);
 		}
 		await Avatars.updateFileNameById(file._id, user.username);
-		// console.log('upload finished ->', file);
 	},
 
 	async requestCanAccessFiles({ headers = {}, url }: http.IncomingMessage, file?: IUpload) {
@@ -464,14 +474,24 @@ export const FileUpload = {
 			return false;
 		}
 
-		if (!settings.get('FileUpload_Restrict_to_room_members') || !file?.rid) {
+		if (!file?.rid) {
 			return true;
 		}
 
-		const subscription = await Subscriptions.findOneByRoomIdAndUserId(file.rid, user._id, { projection: { _id: 1 } });
+		const fileUploadRestrictedToMembers = settings.get<boolean>('FileUpload_Restrict_to_room_members');
+		const fileUploadRestrictToUsersWhoCanAccessRoom = settings.get<boolean>('FileUpload_Restrict_to_users_who_can_access_room');
 
-		if (subscription) {
+		if (!fileUploadRestrictToUsersWhoCanAccessRoom && !fileUploadRestrictedToMembers) {
 			return true;
+		}
+
+		if (fileUploadRestrictedToMembers && !fileUploadRestrictToUsersWhoCanAccessRoom) {
+			const sub = await Subscriptions.findOneByRoomIdAndUserId(file.rid, user._id, { projection: { _id: 1 } });
+			return !!sub;
+		}
+
+		if (fileUploadRestrictToUsersWhoCanAccessRoom && !fileUploadRestrictedToMembers) {
+			return canAccessRoomIdAsync(file.rid, user._id);
 		}
 
 		return false;
@@ -587,15 +607,7 @@ export const FileUpload = {
 			}
 
 			// eslint-disable-next-line prettier/prettier
-			const headersToProxy = [
-				'age',
-				'cache-control',
-				'content-length',
-				'content-type',
-				'date',
-				'expired',
-				'last-modified',
-			];
+			const headersToProxy = ['age', 'cache-control', 'content-length', 'content-type', 'date', 'expired', 'last-modified'];
 
 			headersToProxy.forEach((header) => {
 				fileRes.headers[header] && res.setHeader(header, String(fileRes.headers[header]));

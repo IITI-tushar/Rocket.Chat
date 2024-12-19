@@ -7,16 +7,15 @@ export type MessageListContextValue = {
 	useShowFollowing: ({ message }: { message: IMessage }) => boolean;
 	useMessageDateFormatter: () => (date: Date) => string;
 	useUserHasReacted: (message: IMessage) => (reaction: string) => boolean;
-	useOpenEmojiPicker: (message: IMessage) => (event: React.MouseEvent) => void;
+	useOpenEmojiPicker: (message: IMessage) => (event: React.MouseEvent | React.KeyboardEvent) => void;
 	showRoles: boolean;
 	showRealName: boolean;
 	showUsername: boolean;
-	highlights?:
-		| {
-				highlight: string;
-				regex: RegExp;
-				urlRegex: RegExp;
-		  }[];
+	highlights?: {
+		highlight: string;
+		regex: RegExp;
+		urlRegex: RegExp;
+	}[];
 	katex?: {
 		dollarSyntaxEnabled: boolean;
 		parenthesisSyntaxEnabled: boolean;

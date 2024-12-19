@@ -5,6 +5,9 @@ import { usePermission, useRole, useSetting, useTranslation, useUser, useUserPre
 import type { MouseEventHandler, ReactElement, UIEvent } from 'react';
 import React, { memo, useCallback, useMemo, useRef } from 'react';
 
+import DropTargetOverlay from './DropTargetOverlay';
+import JumpToRecentMessageButton from './JumpToRecentMessageButton';
+import LeaderBar from './LeaderBar';
 import { RoomRoles } from '../../../../app/models/client';
 import { isTruthy } from '../../../../lib/isTruthy';
 import { CustomScrollbars } from '../../../components/CustomScrollbars';
@@ -13,6 +16,8 @@ import { useReactiveQuery } from '../../../hooks/useReactiveQuery';
 import Announcement from '../Announcement';
 import { BubbleDate } from '../BubbleDate';
 import { MessageList } from '../MessageList';
+import LoadingMessagesIndicator from './LoadingMessagesIndicator';
+import RetentionPolicyWarning from './RetentionPolicyWarning';
 import MessageListErrorBoundary from '../MessageList/MessageListErrorBoundary';
 import ComposerContainer from '../composer/ComposerContainer';
 import RoomComposer from '../composer/RoomComposer/RoomComposer';
@@ -22,11 +27,7 @@ import { useRoomToolbox } from '../contexts/RoomToolboxContext';
 import { useUserCard } from '../contexts/UserCardContext';
 import { useDateScroll } from '../hooks/useDateScroll';
 import { useMessageListNavigation } from '../hooks/useMessageListNavigation';
-import DropTargetOverlay from './DropTargetOverlay';
-import JumpToRecentMessageButton from './JumpToRecentMessageButton';
-import LeaderBar from './LeaderBar';
-import LoadingMessagesIndicator from './LoadingMessagesIndicator';
-import RetentionPolicyWarning from './RetentionPolicyWarning';
+import { useRetentionPolicy } from '../hooks/useRetentionPolicy';
 import RoomForeword from './RoomForeword/RoomForeword';
 import UnreadMessagesIndicator from './UnreadMessagesIndicator';
 import UploadProgressIndicator from './UploadProgressIndicator';
@@ -39,7 +40,7 @@ import { useListIsAtBottom } from './hooks/useListIsAtBottom';
 import { useQuoteMessageByUrl } from './hooks/useQuoteMessageByUrl';
 import { useReadMessageWindowEvents } from './hooks/useReadMessageWindowEvents';
 import { useRestoreScrollPosition } from './hooks/useRestoreScrollPosition';
-import { useRetentionPolicy } from './hooks/useRetentionPolicy';
+import { useSelectAllAndScrollToTop } from './hooks/useSelectAllAndScrollToTop';
 import { useHandleUnread } from './hooks/useUnreadMessages';
 
 const RoomBody = (): ReactElement => {
@@ -64,7 +65,7 @@ const RoomBody = (): ReactElement => {
 
 	const { hasMorePreviousMessages, hasMoreNextMessages, isLoadingMoreMessages } = useRoomMessages();
 
-	const allowAnonymousRead = useSetting('Accounts_AllowAnonymousRead') as boolean | undefined;
+	const allowAnonymousRead = useSetting('Accounts_AllowAnonymousRead', false);
 
 	const canPreviewChannelRoom = usePermission('preview-c-room');
 
@@ -86,7 +87,7 @@ const RoomBody = (): ReactElement => {
 		return subscribed;
 	}, [allowAnonymousRead, canPreviewChannelRoom, room, subscribed]);
 
-	const useRealName = useSetting('UI_Use_Real_Name') as boolean;
+	const useRealName = useSetting('UI_Use_Real_Name', false);
 
 	const innerBoxRef = useRef<HTMLDivElement | null>(null);
 
@@ -115,7 +116,8 @@ const RoomBody = (): ReactElement => {
 
 	const { innerRef: restoreScrollPositionInnerRef } = useRestoreScrollPosition(room._id);
 
-	const { messageListRef, messageListProps } = useMessageListNavigation();
+	const { messageListRef } = useMessageListNavigation();
+	const { innerRef: selectAndScrollRef, selectAllAndScrollToTop } = useSelectAllAndScrollToTop();
 
 	const { handleNewMessageButtonClick, handleJumpToRecentButtonClick, handleComposerResize, hasNewMessages, newMessagesScrollRef } =
 		useHasNewMessages(room._id, user?._id, atBottomRef, {
@@ -133,7 +135,7 @@ const RoomBody = (): ReactElement => {
 		leaderBannerInnerRef,
 		unreadBarInnerRef,
 		getMoreInnerRef,
-
+		selectAndScrollRef,
 		messageListRef,
 	);
 
@@ -218,6 +220,7 @@ const RoomBody = (): ReactElement => {
 			{!isLayoutEmbedded && room.announcement && <Announcement announcement={room.announcement} announcementDetails={undefined} />}
 			<Box key={room._id} className={['main-content-flex', listStyle]}>
 				<section
+					role='presentation'
 					className={`messages-container flex-tab-main-content ${admin ? 'admin' : ''}`}
 					id={`chat-window-${room._id}`}
 					onClick={hideFlexTab && handleCloseFlexTab}
@@ -283,15 +286,15 @@ const RoomBody = (): ReactElement => {
 								>
 									<MessageListErrorBoundary>
 										<CustomScrollbars ref={innerRef}>
-											<ul className='messages-list' aria-live='polite' aria-busy={isLoadingMoreMessages} {...messageListProps}>
+											<ul className='messages-list' aria-label={t('Message_list')} aria-busy={isLoadingMoreMessages}>
 												{canPreview ? (
 													<>
 														{hasMorePreviousMessages ? (
 															<li className='load-more'>{isLoadingMoreMessages ? <LoadingMessagesIndicator /> : null}</li>
 														) : (
-															<li className='start color-info-font-color'>
-																{retentionPolicy ? <RetentionPolicyWarning {...retentionPolicy} /> : null}
+															<li>
 																<RoomForeword user={user} room={room} />
+																{retentionPolicy?.isActive ? <RetentionPolicyWarning room={room} /> : null}
 															</li>
 														)}
 													</>
@@ -312,6 +315,7 @@ const RoomBody = (): ReactElement => {
 									onNavigateToPreviousMessage={handleNavigateToPreviousMessage}
 									onNavigateToNextMessage={handleNavigateToNextMessage}
 									onUploadFiles={handleUploadFiles}
+									onClickSelectAll={selectAllAndScrollToTop}
 									// TODO: send previewUrls param
 									// previewUrls={}
 								/>

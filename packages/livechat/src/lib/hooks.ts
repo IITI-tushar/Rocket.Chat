@@ -11,19 +11,58 @@ import { createToken } from './random';
 import { loadMessages } from './room';
 import Triggers from './triggers';
 
+const evaluateChangesAndLoadConfigByFields = async (fn: () => Promise<void>) => {
+	const oldStore = JSON.parse(
+		JSON.stringify({
+			user: store.state.user || {},
+			token: store.state.token,
+		}),
+	);
+	await fn();
+
+	/**
+	 * it solves the issues where the registerGuest is called every time the widget is opened
+	 * and the guest is already registered. If there is nothing different in the data,
+	 * it will not call the loadConfig again.
+	 *
+	 * if user changes, it will call loadConfig
+	 * if department changes, it will call loadConfig
+	 * if token changes, it will call loadConfig
+	 */
+
+	if (oldStore.user._id !== store.state.user?._id) {
+		await loadConfig();
+		await loadMessages();
+		return;
+	}
+
+	if (oldStore.token !== store.state.token) {
+		await loadConfig();
+		await loadMessages();
+	}
+};
+
 const createOrUpdateGuest = async (guest: StoreState['guest']) => {
 	if (!guest) {
 		return;
 	}
+
 	const { token } = guest;
 	token && (await store.setState({ token }));
+
+	const {
+		iframe: { defaultDepartment },
+	} = store.state;
+	if (defaultDepartment && !guest.department) {
+		guest.department = defaultDepartment;
+	}
+
 	const { visitor: user } = await Livechat.grantVisitor({ visitor: { ...guest } });
 
 	if (!user) {
 		return;
 	}
 	store.setState({ user } as Omit<StoreState['user'], 'ts'>);
-	await loadConfig();
 	Triggers.callbacks?.emit('chat-visitor-registered');
 };
 
@@ -98,17 +137,9 @@ const api = {
 
 	setDepartment: async (value: string) => {
 		const {
-			user,
 			config: { departments = [] },
 			defaultAgent,
 		} = store.state;
-
-		if (!user) {
-			updateIframeData({ defaultDepartment: value });
-			return;
-		}
-
-		const { department: existingDepartment } = user || {};
 
 		const department = departments.find((dep) => dep._id === value || dep.name === value)?._id || '';
 
@@ -118,16 +149,10 @@ const api = {
 			);
 		}
 
-		updateIframeGuestData({ department });
-		store.setState({ department });
+		updateIframeData({ defaultDepartment: department });
 
 		if (defaultAgent && defaultAgent.department !== department) {
 			store.setState({ defaultAgent: undefined });
-		}
-
-		if (department !== existingDepartment) {
-			await loadConfig();
-			await loadMessages();
 		}
 	},
 
@@ -185,7 +210,10 @@ const api = {
 		if (token === localToken) {
 			return;
 		}
-		await createOrUpdateGuest({ token });
+
+		await evaluateChangesAndLoadConfigByFields(async () => {
+			await createOrUpdateGuest({ token });
+		});
 	},
 
 	setGuestName: (name: string) => {
@@ -201,17 +229,43 @@ const api = {
 			return;
 		}
 
-		if (!data.token) {
-			data.token = createToken();
+		await evaluateChangesAndLoadConfigByFields(async () => {
+			if (!data.token) {
+				data.token = createToken();
+			}
+			const {
+				iframe: { defaultDepartment },
+			} = store.state;
+
+			if (defaultDepartment && !data.department) {
+				data.department = defaultDepartment;
+			}
+
+			Livechat.unsubscribeAll();
+
+			await createOrUpdateGuest(data);
+		});
+	},
+
+	transferChat: async (department: string) => {
+		const {
+			config: { departments = [] },
+			room,
+		} = store.state;
+
+		const dep = departments.find((dep) => dep._id === department || dep.name === department)?._id || '';
+
+		if (!dep) {
+			throw new Error(
+				'The selected department is invalid. Check departments configuration to ensure the department exists, is enabled and has at least 1 agent',
+			);
+		}
+		if (!room) {
+			throw new Error("Conversation has not been started yet, can't transfer");
 		}
 
-		if (data.department) {
-			api.setDepartment(data.department);
-		}
-
-		Livechat.unsubscribeAll();
-
-		await createOrUpdateGuest(data);
+		const { _id: rid } = room;
+		await Livechat.transferChat({ rid, department: dep });
 	},
 
 	setLanguage: async (language: StoreState['iframe']['language']) => {
