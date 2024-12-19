@@ -125,7 +125,7 @@ Join [#support](https://open.rocket.chat/channel/support) and [#general](https:/
 
 Rocket.Chat is an open source project and we are very happy to accept community contributions. Please refer to the [How can I help?](https://developer.rocket.chat/contribute-to-rocket.chat/ways-to-contribute) page for more details.
 
-# 🚀 Onboarding Made Easy with RC.Guided.Tours
+# 🚀 CodeBase guide
 
 To make contributing to Rocket.Chat easier for new developers, we've introduced RC.Guided.Tours.
 
